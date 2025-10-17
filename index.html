@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>お絵かきサイト</title>
+  <style>
+    body { text-align: center; font-family: sans-serif; background: #f3f3f3; }
+    canvas { border: 2px solid #333; background: white; cursor: crosshair; }
+    .toolbar { margin: 10px; }
+    button, input[type=color], input[type=range] { margin: 0 5px; }
+  </style>
+</head>
+<body>
+  <h2>🎨 お絵かきサイト</h2>
+  <div class="toolbar">
+    色：<input type="color" id="color" value="#000000">
+    太さ：<input type="range" id="size" min="1" max="30" value="3">
+    <button id="eraser">消しゴム</button>
+    <button id="undo">戻す</button>
+    <button id="save">保存</button>
+  </div>
+
+  <canvas id="board" width="800" height="600"></canvas>
+
+  <script>
+    const canvas = document.getElementById('board');
+    const ctx = canvas.getContext('2d');
+    const colorPicker = document.getElementById('color');
+    const sizePicker = document.getElementById('size');
+    const eraser = document.getElementById('eraser');
+    const undo = document.getElementById('undo');
+    const save = document.getElementById('save');
+
+    let drawing = false;
+    let lastX, lastY;
+    let strokes = [];
+    let currentColor = colorPicker.value;
+    let currentSize = sizePicker.value;
+    let erasing = false;
+
+    canvas.addEventListener('mousedown', startDraw);
+    canvas.addEventListener('mouseup', stopDraw);
+    canvas.addEventListener('mouseout', stopDraw);
+    canvas.addEventListener('mousemove', draw);
+
+    colorPicker.addEventListener('input', () => {
+      currentColor = colorPicker.value;
+      erasing = false;
+    });
+
+    sizePicker.addEventListener('input', () => {
+      currentSize = sizePicker.value;
+    });
+
+    eraser.addEventListener('click', () => {
+      erasing = !erasing;
+      eraser.textContent = erasing ? "描くモードに戻す" : "消しゴム";
+    });
+
+    undo.addEventListener('click', () => {
+      strokes.pop();
+      redraw();
+    });
+
+    save.addEventListener('click', () => {
+      const link = document.createElement('a');
+      link.download = 'oekaki.png';
+      link.href = canvas.toDataURL();
+      link.click();
+    });
+
+    function startDraw(e) {
+      drawing = true;
+      [lastX, lastY] = [e.offsetX, e.offsetY];
+      ctx.beginPath();
+    }
+
+    function stopDraw() {
+      drawing = false;
+      ctx.beginPath();
+      strokes.push(canvas.toDataURL());
+    }
+
+    function draw(e) {
+      if (!drawing) return;
+      ctx.lineWidth = currentSize;
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = erasing ? "#ffffff" : currentColor;
+      ctx.lineTo(e.offsetX, e.offsetY);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(e.offsetX, e.offsetY);
+    }
+
+    function redraw() {
+      const img = new Image();
+      if (strokes.length === 0) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        return;
+      }
+      img.src = strokes[strokes.length - 1];
+      img.onload = () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+      };
+    }
+  </script>
+</body>
+</html>
