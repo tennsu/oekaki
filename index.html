@@ -2,22 +2,48 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <title>お絵かきサイト</title>
+  <title>お絵かきサイト（ぼかし・混色ブラシ付き）</title>
   <style>
     body { text-align: center; font-family: sans-serif; background: #f3f3f3; }
     canvas { border: 2px solid #333; background: white; cursor: crosshair; }
     .toolbar { margin: 10px; }
-    button, input[type=color], input[type=range] { margin: 0 5px; }
+    button, input, select { margin: 5px; }
+    .color-sliders { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
+    .slider-group { display: flex; flex-direction: column; align-items: center; }
+    .slider-group label { font-size: 12px; }
   </style>
 </head>
 <body>
-  <h2>🎨 お絵かきサイト</h2>
+  <h2>🎨 お絵かきサイト（ペン＋ぼかし＋混色）</h2>
+  
   <div class="toolbar">
-    色：<input type="color" id="color" value="#000000">
-    太さ：<input type="range" id="size" min="1" max="30" value="3">
+    ペン種類：
+    <select id="penType">
+      <option value="normal">普通のペン</option>
+      <option value="marker">マーカー</option>
+      <option value="pencil">鉛筆</option>
+      <option value="brush">太ブラシ</option>
+      <option value="airbrush">エアブラシ</option>
+      <option value="blur">ぼかしブラシ</option>
+      <option value="mix">混色ブラシ</option>
+    </select>
+    
+    太さ：<input type="range" id="size" min="1" max="50" value="10">
     <button id="eraser">消しゴム</button>
     <button id="undo">戻す</button>
     <button id="save">保存</button>
+  </div>
+
+  <div class="color-sliders">
+    <div class="slider-group"><label>R</label><input type="range" id="r" min="0" max="255" value="0"></div>
+    <div class="slider-group"><label>G</label><input type="range" id="g" min="0" max="255" value="0"></div>
+    <div class="slider-group"><label>B</label><input type="range" id="b" min="0" max="255" value="0"></div>
+    <div class="slider-group"><label>透明度</label><input type="range" id="a" min="0" max="1" value="1" step="0.01"></div>
+  </div>
+
+  <div>
+    <span>現在の色：</span>
+    <div id="colorPreview" style="display:inline-block;width:40px;height:20px;border:1px solid #333;background:black;"></div>
   </div>
 
   <canvas id="board" width="800" height="600"></canvas>
@@ -25,43 +51,42 @@
   <script>
     const canvas = document.getElementById('board');
     const ctx = canvas.getContext('2d');
-    const colorPicker = document.getElementById('color');
+    const penType = document.getElementById('penType');
     const sizePicker = document.getElementById('size');
     const eraser = document.getElementById('eraser');
     const undo = document.getElementById('undo');
     const save = document.getElementById('save');
+    const colorPreview = document.getElementById('colorPreview');
+    const sliders = {
+      r: document.getElementById('r'),
+      g: document.getElementById('g'),
+      b: document.getElementById('b'),
+      a: document.getElementById('a'),
+    };
 
     let drawing = false;
     let lastX, lastY;
     let strokes = [];
-    let currentColor = colorPicker.value;
-    let currentSize = sizePicker.value;
     let erasing = false;
+    let currentPen = penType.value;
+    let airbrushInterval = null;
 
-    canvas.addEventListener('mousedown', startDraw);
-    canvas.addEventListener('mouseup', stopDraw);
-    canvas.addEventListener('mouseout', stopDraw);
-    canvas.addEventListener('mousemove', draw);
+    function currentColor() {
+      return `rgba(${sliders.r.value}, ${sliders.g.value}, ${sliders.b.value}, ${sliders.a.value})`;
+    }
 
-    colorPicker.addEventListener('input', () => {
-      currentColor = colorPicker.value;
-      erasing = false;
-    });
+    function updatePreview() {
+      colorPreview.style.background = currentColor();
+    }
+    Object.values(sliders).forEach(s => s.addEventListener('input', updatePreview));
+    updatePreview();
 
-    sizePicker.addEventListener('input', () => {
-      currentSize = sizePicker.value;
-    });
-
+    penType.addEventListener('change', () => currentPen = penType.value);
     eraser.addEventListener('click', () => {
       erasing = !erasing;
       eraser.textContent = erasing ? "描くモードに戻す" : "消しゴム";
     });
-
-    undo.addEventListener('click', () => {
-      strokes.pop();
-      redraw();
-    });
-
+    undo.addEventListener('click', () => { strokes.pop(); redraw(); });
     save.addEventListener('click', () => {
       const link = document.createElement('a');
       link.download = 'oekaki.png';
@@ -69,27 +94,119 @@
       link.click();
     });
 
+    canvas.addEventListener('mousedown', startDraw);
+    canvas.addEventListener('mouseup', stopDraw);
+    canvas.addEventListener('mouseout', stopDraw);
+    canvas.addEventListener('mousemove', draw);
+
     function startDraw(e) {
       drawing = true;
       [lastX, lastY] = [e.offsetX, e.offsetY];
       ctx.beginPath();
+      if (currentPen === "airbrush") airbrushInterval = setInterval(() => spray(e), 30);
     }
 
     function stopDraw() {
       drawing = false;
       ctx.beginPath();
       strokes.push(canvas.toDataURL());
+      if (airbrushInterval) { clearInterval(airbrushInterval); airbrushInterval = null; }
     }
 
     function draw(e) {
       if (!drawing) return;
-      ctx.lineWidth = currentSize;
+      const x = e.offsetX;
+      const y = e.offsetY;
+      const size = parseFloat(sizePicker.value);
+      const alpha = parseFloat(sliders.a.value);
+
+      if (currentPen === "blur") { blurArea(x, y, size); return; }
+      if (currentPen === "mix") { mixArea(x, y, size); return; }
+      if (currentPen === "airbrush") { lastX = x; lastY = y; return; }
+
+      let lineWidth = size;
+      ctx.globalAlpha = alpha;
+      ctx.globalCompositeOperation = erasing ? "destination-out" : "source-over";
       ctx.lineCap = 'round';
-      ctx.strokeStyle = erasing ? "#ffffff" : currentColor;
-      ctx.lineTo(e.offsetX, e.offsetY);
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = currentColor();
+
+      switch (currentPen) {
+        case "marker": ctx.globalAlpha = alpha * 0.3; lineWidth *= 2; break;
+        case "pencil": ctx.globalAlpha = alpha * 0.4; lineWidth *= 0.7; break;
+        case "brush": ctx.globalAlpha = alpha * 0.9; lineWidth *= 3; break;
+      }
+
+      ctx.lineWidth = lineWidth;
+      ctx.lineTo(x, y);
       ctx.stroke();
       ctx.beginPath();
-      ctx.moveTo(e.offsetX, e.offsetY);
+      ctx.moveTo(x, y);
+    }
+
+    // ---- ぼかしブラシ ----
+    function blurArea(x, y, size) {
+      const radius = size / 2;
+      const imgData = ctx.getImageData(x - radius, y - radius, size, size);
+      const data = imgData.data;
+      const w = imgData.width, h = imgData.height;
+
+      // ピクセルを平均化
+      const blurRadius = 2;
+      const copy = new Uint8ClampedArray(data);
+
+      for (let j = blurRadius; j < h - blurRadius; j++) {
+        for (let i = blurRadius; i < w - blurRadius; i++) {
+          let r = 0, g = 0, b = 0, count = 0;
+          for (let y2 = -blurRadius; y2 <= blurRadius; y2++) {
+            for (let x2 = -blurRadius; x2 <= blurRadius; x2++) {
+              const idx = ((j + y2) * w + (i + x2)) * 4;
+              r += copy[idx];
+              g += copy[idx + 1];
+              b += copy[idx + 2];
+              count++;
+            }
+          }
+          const idx = (j * w + i) * 4;
+          data[idx] = r / count;
+          data[idx + 1] = g / count;
+          data[idx + 2] = b / count;
+        }
+      }
+
+      ctx.putImageData(imgData, x - radius, y - radius);
+    }
+
+    // ---- 混色ブラシ ----
+    function mixArea(x, y, size) {
+      const radius = size / 2;
+      const imgData = ctx.getImageData(x - radius, y - radius, size, size);
+      const data = imgData.data;
+      const [rMix, gMix, bMix, aMix] = currentColor().match(/\d+(\.\d+)?/g).map(Number);
+
+      for (let i = 0; i < data.length; i += 4) {
+        data[i] = (data[i] * 0.8 + rMix * 0.2);
+        data[i + 1] = (data[i + 1] * 0.8 + gMix * 0.2);
+        data[i + 2] = (data[i + 2] * 0.8 + bMix * 0.2);
+      }
+
+      ctx.putImageData(imgData, x - radius, y - radius);
+    }
+
+    // ---- エアブラシ ----
+    function spray() {
+      const density = 30;
+      ctx.globalAlpha = sliders.a.value * 0.1;
+      ctx.fillStyle = currentColor();
+      for (let i = 0; i < density; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const radius = Math.random() * sizePicker.value;
+        const x = lastX + Math.cos(angle) * radius;
+        const y = lastY + Math.sin(angle) * radius;
+        ctx.beginPath();
+        ctx.arc(x, y, 0.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
     function redraw() {
